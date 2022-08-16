@@ -1,0 +1,55 @@
+---
+title: "Simple paired T test"
+output: html_notebook
+---
+
+Kokeilun ja harjoituksen vuoksi yksinkertainen within t testi.
+
+```{r}
+library(tidyverse)
+library(ggstatsplot)
+```
+
+```{r}
+
+data <- read_delim(file = 'ospan_and_survey.csv',delim=",")
+```
+
+```{r}
+data
+```
+
+```{r}
+data.lonng <- pivot_longer(data, cols=2:3, names_to = 'Task', values_to = "Score")
+```
+
+```{r}
+data.lonng
+```
+
+```{r}
+ggwithinstats(data = data.lonng, x=Task, y=Score, type = "nonparametric")
+```
+
+Pelkkä puhelimen läsnäolo ei pelkästään vaikuta paljon ospan tulokseen, ainakaan tällä otoksella.
+
+```{r}
+ggbetweenstats(data = data.lonng, x=bal, y=Score)
+```
+
+```{r}
+grouped_gghistostats(data = data.lonng, grouping.var = bal, x = Score, normal.curve = TRUE, binwidth = 1)
+```
+
+```{r}
+grouped_gghistostats(data = data.lonng, grouping.var = Task, x = Score,normal.curve = TRUE)
+```
+
+```{r}
+data.lonng %>% group_by(Task) %>%
+  summarise(mean = round(mean(Score), digits = 2),
+            sd = round(sd(Score), digits = 2),
+            median = median(Score),
+            range = paste(min(Score), "-", max(Score)),
+            n = sum(!is.na(Score)))
+```
