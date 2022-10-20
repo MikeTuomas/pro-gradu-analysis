@@ -1,0 +1,88 @@
+---
+title: "Simple paired T test"
+output: html_notebook
+---
+
+Osallistujien tulosten visualisointi ja laskenta
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+data <- read_delim(file = 'ospan_and_survey.csv',delim=",")
+```
+
+```{r}
+data
+```
+```{r}
+data <- data %>% add_row(subjectId = 7, score_1 = 21, score_2 = 20)
+```
+
+```{r}
+data.lonng <- pivot_longer(data, cols=2:3, names_to = 'Task', values_to = "Score")
+```
+
+```{r}
+data.lonng
+```
+
+```{r}
+library(moments)
+data.lonng %>% group_by(Task) %>%
+  summarise(mean = round(mean(Score), digits = 2),
+            sd = round(sd(Score), digits = 2),
+            median = median(Score),
+            range = paste(min(Score), "-", max(Score)),
+            n = sum(!is.na(Score)),
+            skew = round(skewness(Score), digits = 2),
+            kurtosis = round(kurtosis(Score), digits = 2)-3
+  )
+
+data.lonng %>% 
+  summarise(mean = round(mean(Score), digits = 2),
+            sd = round(sd(Score), digits = 2),
+            median = median(Score),
+            range = paste(min(Score), "-", max(Score)),
+            n = sum(!is.na(Score)),
+            skew = round(skewness(Score), digits = 2),
+            kurtosis = round(kurtosis(Score), digits = 2)-3
+  )
+
+```
+```{r}
+data.lonng %>% 
+  summarise(mean = round(mean(Score), digits = 2),
+            sd = round(sd(Score), digits = 2),
+            median = median(Score),
+            range = paste(min(Score), "-", max(Score)),
+            n = sum(!is.na(Score)),
+            skew = round(skewness(Score), digits = 2),
+            kurtosis = round(kurtosis(Score), digits = 2))
+```
+
+```{r}
+print(data$subjectId)
+```
+
+```{r}
+
+varId <- 28
+data.lonng %>% mutate(Selite = ifelse(subjectId == varId, "Sinun", "Muiden")) %>% ggplot + aes(Score) +
+  geom_bar(aes(fill= Selite, Score)) +
+  labs(x = "OSPAN pisteet", y = "Lukumäärä", subtitle = paste("Sinun pisteesi:",data[data$subjectId == varId, "score_1"], "ja", data[data$subjectId == varId, "score_2"], ". Kaikkien pisteiden keskiarvo on 24.74(sd 5.29) ja mediaani 26.")) +
+  coord_cartesian(ylim = c(0,13))
+ggsave(filename = paste("score_", varId,".png", sep=""))
+```
+```{r}
+#English
+varId <- 7
+data.lonng %>% mutate(Selite = ifelse(subjectId == varId, "Yours", "Others")) %>% ggplot + aes(Score) +
+  geom_bar(aes(fill= Selite, Score)) +
+  labs(x = "OSPAN points", y = "Count", subtitle = paste("Your points:",data[data$subjectId == varId, "score_1"], "and", data[data$subjectId == varId, "score_2"], ". Overall mean of the points was 24.74(sd 5.29) and median 26.")) +
+  coord_cartesian(ylim = c(0,13))
+ggsave(filename = paste("score_", varId,".png", sep=""))
+```
+
+
