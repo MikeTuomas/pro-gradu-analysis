@@ -1,0 +1,28 @@
+---
+title: "Aineisto pitkään formaattiin"
+author: "Mikael Ovaska"
+date: "2022-10-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Muokkaa aienisto pitkään formaattiin
+
+Monitasomallia käytettäessä aineiston tulee olla ns. pitkässä formaatissa, eli jokaisen "havainnon" tulee olla omalla rivillä. Monitasomallin tapauksessa yksittäinen havainto on AOSpan tehtävän pistemäärä.
+
+Alunperin aineisto on leveässä formaatissa, jossa yksittäinen havainto on osallistuja.
+
+```{r}
+library(tidyverse)
+data <- read_delim(file = 'ospan_and_survey.csv',delim=",")
+data.long <- pivot_longer(data, cols=2:3, names_to = 'Task', values_to = "Score")
+data.long
+```
+
+```{r}
+write_csv(data.long, "ospan_survey_long.csv")
+```
+
