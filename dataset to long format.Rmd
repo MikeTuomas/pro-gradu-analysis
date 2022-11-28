@@ -9,12 +9,9 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Muokkaa aienisto pitkään formaattiin
+## Muokkaa aineisto pitkään formaattiin JASPia varten
 
-Monitasomallia käytettäessä aineiston tulee olla ns. pitkässä formaatissa, eli jokaisen "havainnon" tulee olla omalla rivillä. Monitasomallin tapauksessa yksittäinen havainto on AOSpan tehtävän pistemäärä.
-
-Alunperin aineisto on leveässä formaatissa, jossa yksittäinen havainto on osallistuja.
-
+JASPilla aineiston muokkaus on työlästä.
 ```{r}
 library(tidyverse)
 data <- read_delim(file = 'ospan_and_survey.csv',delim=",")
