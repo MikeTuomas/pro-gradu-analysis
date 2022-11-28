@@ -1,0 +1,508 @@
+---
+title: "Pro gradun tilastoanalyysit"
+author: "Mikael Ovaska"
+date: "2022-10-20"
+output:
+  html_document: 
+    df_print: tibble
+    toc: yes
+    theme: united
+    number_sections: yes
+---
+
+```{r}
+library(tidyverse)
+library(jtools)
+library(lme4)
+library(sjPlot)
+library(sjmisc)
+library(rstatix)
+library(AICcmodavg)
+library(moments)
+data <- read_delim(file = 'ospan_and_survey.csv',delim=",")
+data
+```
+
+## Aineiston rajaus
+Rajun kattoefektin takia luodaan ainestosta kaksi versiota.
+
+```{r}
+data.1_30 <- data 
+data.e_30 <- data %>% filter(score_1<30 & score_2<30)
+
+data.1_30long <- pivot_longer(data.1_30, cols=2:3, names_to = 'Task', values_to = "Score")
+data.ei_30long <- pivot_longer(data.e_30, cols=2:3, names_to = 'Task', values_to = "Score")
+
+data.30 <- select(data.1_30long, subjectId, Score, Task, bal, gender, age, 
+                   ovs, ovs_salience, ovs_reactibility, ovs_monitoring, 
+                   asq, asq_int, asq_ext, vdaq)
+
+data.ei_30 <- select(data.ei_30long, subjectId, Score, Task, bal, gender, age, 
+                   ovs, ovs_salience, ovs_reactibility, ovs_monitoring, 
+                   asq, asq_int, asq_ext, vdaq)
+
+data.30 #koko
+data.ei_30 #30 edes toisessa poistettu
+```
+```{r}
+data.30$Task <- relevel(as_factor(data.30$Task), ref = "score_2")
+data.ei_30$Task <- relevel(as_factor(data.ei_30$Task), ref = "score_2")
+```
+## Muuttujien hierarkia
+
+Kuvassa on esitetty kuinka aineiston muuttujat ovat suhteessa toisiinsa.
+
+![Muuttujat](Model_hierarchy-Suomi.jpg)
+
+### Kuinka counterbalanssi tulee mallintaa?
+
+Notebookkiin tuodussa muuttujassa 'bal' on seuraava koodaus:
+
+a(cond 1-\> cond 2), b(cond 2 -\> cond 1)
+
+Eli balanssissa 'a' tehtävä suoritettiin ensin puhelimen läsnäollessa ja 'b' puhelimen ollessa selän takana. Näin koodattuna lme4 kuitenkin luulee sen olevan kakkostason muuttuja, jolloin se liittyisi osallistujaan. Sen tulisi olla tasolla 1, koska se on mittaukseen liittyvä muuttuja eikä osallistujaan. Koodaamalla se uudestaan se voidaan tiputtaa tasolle 1.
+
+Luodaan 'bal' muuttujasta uusi muuttuja, joka kuvaa oliko havainto tehtävistä osallistujan ensimmäinen vai toinen suoritus.
+
+```{r}
+data.30 <- data.30 %>% mutate(Balance = ifelse((Task=='score_1' & bal=='a')| (Task=='score_2' & bal=='b'), 'first', 'second'))
+data.ei_30 <- data.ei_30 %>% mutate(Balance = ifelse((Task=='score_1' & bal=='a')| (Task=='score_2' & bal=='b'), 'first', 'second'))
+```
+
+### Datan keskitys ja stantardointi
+
+Lineaari regression vakioiden ja leikkauksen tulkinta on hankalaa, jos sisällytettävillä muuttujilla ei ole selkeää nollakohtaa tai sellaista ei ole määritetty. Psykologisilla mittareilla ja isällä ei ole luonnollista nollakohtaa, joten luodaan niille sellaiset. Muuttujat keskitetään vähentämällä muuttujista niiden keskiarvo. Tällöin koko otoksen keskiarvosta tulee muuttujan nollakohta, jolloin vakioita voidaan tulkita suhteessa koko otoksen keskiarvoon ja leikkauskohta (intercept) kertoo, mikä tehtävän tuloksen arvioidaan olevan muuttujien saadessa niiden keskiarvon. Tällöin leikkauskohta asettuu tulkinnan kannalta mielekkääseen kohtaan.
+
+```{r}
+data.30$age_c <- (data.30$age - mean(data.30$age))
+
+data.30$ovs_c <- (data.30$ovs - mean(data.30$ovs))
+data.30$ovs_salience_c <- (data.30$ovs_salience - mean(data.30$ovs_salience))
+data.30$ovs_reactibility_c <- (data.30$ovs_reactibility - mean(data.30$ovs_reactibility))
+data.30$ovs_monitoring_c <- (data.30$ovs_monitoring - mean(data.30$ovs_monitoring))
+
+data.30$asq_c <- (data.30$asq - mean(data.30$asq))
+data.30$asq_ext_c <- (data.30$asq_ext - mean(data.30$asq_ext))
+data.30$asq_int_c <- (data.30$asq_int - mean(data.30$asq_int))
+
+data.30$vdaq_c <- (data.30$vdaq - mean(data.30$vdaq))
+
+
+data.ei_30$age_c <- (data.ei_30$age - mean(data.ei_30$age))
+
+data.ei_30$ovs_c <- (data.ei_30$ovs - mean(data.ei_30$ovs))
+data.ei_30$ovs_salience_c <- (data.ei_30$ovs_salience - mean(data.ei_30$ovs_salience))
+data.ei_30$ovs_reactibility_c <- (data.ei_30$ovs_reactibility - mean(data.ei_30$ovs_reactibility))
+data.ei_30$ovs_monitoring_c <- (data.ei_30$ovs_monitoring - mean(data.ei_30$ovs_monitoring))
+
+data.ei_30$asq_c <- (data.ei_30$asq - mean(data.ei_30$asq))
+data.ei_30$asq_ext_c <- (data.ei_30$asq_ext - mean(data.ei_30$asq_ext))
+data.ei_30$asq_int_c <- (data.ei_30$asq_int - mean(data.ei_30$asq_int))
+
+data.ei_30$vdaq_c <- (data.ei_30$vdaq - mean(data.ei_30$vdaq))
+```
+
+Pelkästään keskittämällä muuttujat ne eivät ole kuitenkaan toistensa kanssa vertailukelpoisia. Tämä saadaan toteutettua stantardisoialla muuttujat, esimerkiksi vähentämällä keskiarvon ja jakamalla kahdella keskihajonnalla. Kahdella keskihajonnalla jaettaessa jatkuvat muuttujat ovat likipitäen vertailukelpoisia binääristen muuttujien kanssa [0]
+
+[0] Gelman, A., Hill, J., & Vehtari, A. (2020). *Regression and other stories*. Cambridge University Press.
+
+```{r}
+data.30$age_z <- (data.30$age - mean(data.30$age))/(2*sd(data.30$age))
+
+data.30$ovs_z <- (data.30$ovs - mean(data.30$ovs))/(2*sd(data.30$ovs))
+data.30$ovs_salience_z <- (data.30$ovs_salience - mean(data.30$ovs_salience))/(2*sd(data.30$ovs_salience))
+data.30$ovs_reactibility_z <- (data.30$ovs_reactibility - mean(data.30$ovs_reactibility))/(2*sd(data.30$ovs_reactibility))
+
+data.30$ovs_monitoring_z <- (data.30$ovs_monitoring - mean(data.30$ovs_monitoring))/(2*sd(data.30$ovs_monitoring))
+
+data.30$asq_z <- (data.30$asq - mean(data.30$asq))/(2*sd(data.30$asq))
+data.30$asq_ext_z <- (data.30$asq_ext - mean(data.30$asq_ext))/(2*sd(data.30$asq_ext))
+data.30$asq_int_z <- (data.30$asq_int - mean(data.30$asq_int))/(2*sd(data.30$asq_int))
+
+data.30$vdaq_z <- (data.30$vdaq - mean(data.30$vdaq))/(2*sd(data.30$vdaq))
+
+
+data.ei_30$age_z <- (data.ei_30$age - mean(data.ei_30$age))/(2*sd(data.ei_30$age))
+
+data.ei_30$ovs_z <- (data.ei_30$ovs - mean(data.ei_30$ovs))/(2*sd(data.ei_30$ovs))
+data.ei_30$ovs_salience_z <- (data.ei_30$ovs_salience - mean(data.ei_30$ovs_salience))/(2*sd(data.ei_30$ovs_salience))
+data.ei_30$ovs_reactibility_z <- (data.ei_30$ovs_reactibility - mean(data.ei_30$ovs_reactibility))/(2*sd(data.ei_30$ovs_reactibility))
+
+data.ei_30$ovs_monitoring_z <- (data.ei_30$ovs_monitoring - mean(data.ei_30$ovs_monitoring))/(2*sd(data.ei_30$ovs_monitoring))
+
+data.ei_30$asq_z <- (data.ei_30$asq - mean(data.ei_30$asq))/(2*sd(data.ei_30$asq))
+data.ei_30$asq_ext_z <- (data.ei_30$asq_ext - mean(data.ei_30$asq_ext))/(2*sd(data.ei_30$asq_ext))
+data.ei_30$asq_int_z <- (data.ei_30$asq_int - mean(data.ei_30$asq_int))/(2*sd(data.ei_30$asq_int))
+
+data.ei_30$vdaq_z <- (data.ei_30$vdaq - mean(data.ei_30$vdaq))/(2*sd(data.ei_30$vdaq))
+```
+## Summary
+```{r}
+data.ei_30 %>% 
+  summarise(mean = round(mean(Score), digits = 2),
+            sd = round(sd(Score), digits = 2),
+            median = median(Score),
+            range = paste(min(Score), "-", max(Score)),
+            n = sum(!is.na(Score)),
+            skew = round(skewness(Score), digits = 2),
+            kurtosis = round(kurtosis(Score), digits = 2)-3
+  )
+data.30 %>%  dplyr::group_by(Task) %>%
+  summarise(mean = round(mean(Score), digits = 2),
+            sd = round(sd(Score), digits = 2),
+            median = median(Score),
+            range = paste(min(Score), "-", max(Score)),
+            n = sum(!is.na(Score)),
+            skew = round(skewness(Score), digits = 2),
+            kurtosis = round(kurtosis(Score), digits = 2)-3
+  )
+```
+## Normaalius
+### A1
+```{r}
+shapiro.test(data$ovs)
+shapiro.test(data$ovs_salience)
+shapiro.test(data$ovs_reactibility)
+shapiro.test(data$ovs_monitoring)
+shapiro.test(data$asq)
+shapiro.test(data$asq_int)
+shapiro.test(data$asq_ext)
+shapiro.test(data$vdaq)
+shapiro.test(data.30$Score)
+shapiro.test(data$score_1)
+shapiro.test(data$score_2)
+```
+
+Näiden testien perusteella vdaq, ovs, ovs_reactibility, asq_ext ja asq eivät ole normaalisti jakautuneita.
+
+### A2
+```{r}
+shapiro.test(data.e_30$ovs)
+shapiro.test(data.e_30$ovs_salience)
+shapiro.test(data.e_30$ovs_reactibility)
+shapiro.test(data.e_30$ovs_monitoring)
+shapiro.test(data.e_30$asq)
+shapiro.test(data.e_30$asq_int)
+shapiro.test(data.e_30$asq_ext)
+shapiro.test(data.e_30$vdaq)
+shapiro.test(data.ei_30$Score)
+shapiro.test(data.e_30$score_1)
+shapiro.test(data.e_30$score_2)
+```
+# Korrelaatiotaulukot
+
+```{r}
+tab_corr(data %>% filter(score_1<30 & score_2<30) %>% select(  score_1, score_2, age,
+                   ovs, ovs_salience, ovs_reactibility, ovs_monitoring, 
+                   asq, asq_int, asq_ext, vdaq), corr.method = "spearman", p.numeric = TRUE)
+```
+```{r}
+tab_corr(data %>% select( score_1, score_2, age,
+                   ovs, ovs_salience, ovs_reactibility, ovs_monitoring, 
+                   asq, asq_int, asq_ext, vdaq), corr.method = "spearman", p.numeric = TRUE)
+```
+# Puhelimen vaikutuksen testaus
+## Koko aineisto
+```{r}
+data.30 %>% wilcox_test(Score~Task, paired = TRUE, alternative = 'greater')
+data.30 %>% wilcox_effsize(Score~Task, paired = TRUE, ci=TRUE, alternative = 'greater')
+```
+
+```{r}
+#d = 2r/sqrt(1-r^2)
+2*0.01/sqrt(1-0.01^2)
+2*0.24/sqrt(1-0.24^2)
+2*0.58/sqrt(1-0.58^2)
+```
+## Rajattu kaikki 30 pistettä saaneet
+
+```{r}
+data.ei_30 %>% wilcox_test(Score~Task, paired = TRUE, alternative = 'greater')
+data.ei_30 %>% wilcox_effsize(Score~Task, paired = TRUE, ci=TRUE, alternative = 'greater')
+```
+```{r}
+#d = 2r/sqrt(1-r^2)
+2*0.02/sqrt(1-0.02^2)
+
+2*0.25/sqrt(1-0.25^2)
+2*0.65/sqrt(1-0.65^2)
+
+```
+# Mallinnus
+
+## (model0) Nollamalli
+
+Ainoastaan yksilötason varianssi. Tärkeintä todentaa, onko monitaso-mallinnus yleensä edes mielekästä.
+
+Eli selvitetään kuinka suuri osa varianssista on kakkostasolla (yksilö). Suuri arvo tarkoittaa, että varianssista iso osa on yksilön tasolla verrattuna kokonaisvarianssiin.
+
+A1 = Kokonaineisto
+A2 = kaikki 30 tuloksen saaneet poistettu
+
+Myös rajatulla on 
+```{r}
+# To calculate variance partitioning coefficients
+#
+# 
+icc.lmer <- function(model){
+  vars <- as.data.frame(VarCorr(model))[4]
+  total <- sum(vars)
+  tau00 <- vars[1,1]
+  icc <- tau00/total
+  return(icc)
+  }
+```
+### A1
+```{r}
+a1_model0 <- lmer(Score ~ 1 + (1 | subjectId), data=data.30, REML=FALSE)
+summary(a1_model0)
+print(paste("VPC: ", round(icc.lmer(a1_model0), digits=2)))
+```
+VPC on 0.83, joten suuri osa varianssista vaikuttaisi olevan yksilön tasolla. Monitasomalli on siis tässä tapauksessa mielekäs.
+
+### A2
+
+```{r}
+a2_model0 <- lmer(Score ~ 1 + (1 | subjectId), data=data.ei_30, REML=FALSE)
+summary(a2_model0)
+print(paste("VPC: ", round(icc.lmer(a2_model0), digits=2)))
+```
+VPC on 0.79, joten suuri osa varianssista vaikuttaisi olevan yksilön tasolla. Monitasomalli on siis tässä tapauksessa mielekäs.
+
+## Selittävien muuttujien lisääminen malliin
+Tehtävä aina mukana, koska se on tutkimuksen todellinen kiinnostuksen kohde.
+### Task
+#### A1
+```{r}
+a1_m_1 <- lmer(Score ~ Task +(1 | subjectId), data=data.30, REML = FALSE)
+summ(a1_m_1)
+```
+```{r}
+plot_model(a1_m_1,type = "diag")
+```
+
+```{r}
+## balancen kanssa
+a1_m_1_test <- lmer(Score ~ Task + Balance +(1 | subjectId), data=data.30, REML = FALSE)
+summ(a1_m_1_test)
+```
+```{r}
+plot_model(a1_m_1_test,type = "diag",grid = TRUE )
+```
+
+
+```{r}
+plot_model(a1_m_1, type = "std", title = "Mallin kiinteiden efektien efektien koot [std]", axis.title = 'Efektin koko', axis.labels = c('Tehtävän suoritus toisena', 'Puhelin edessä'), show.values = TRUE)
+```
+
+#### A2
+```{r}
+a2_m_1 <- lmer(Score ~ Task + (1 | subjectId), data=data.ei_30, REML = FALSE)
+summ(a2_m_1)
+```
+```{r}
+plot_model(a2_m_1,type = "diag",grid = TRUE )
+```
+
+```{r}
+a2_m_1_test <- lmer(Score ~ Task + Balance +(1 | subjectId), data=data.ei_30, REML = FALSE)
+summ(a2_m_1_test)
+```
+
+```{r}
+plot_model(a2_m_1, type = "std", title = "Mallin kiinteiden efektien efektien koot [std]", axis.title = 'Efektin koko', axis.labels = c('Tehtävän suoritus toisena', 'Puhelin edessä'), show.values = TRUE)
+```
+
+### ASQ
+#### A1
+##### ASQint
+```{r}
+a1_m_asq_int <- lmer(Score ~ Task +  asq_int_c + (1 | subjectId), data=data.30, REML = FALSE)
+a1_m_asq_intz <- lmer(Score ~ Task +  asq_int_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+a1_m_asq_int_iz <- lmer(Score ~ Task*asq_int_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+summ(a1_m_asq_int_iz)
+```
+
+##### ASQext
+```{r}
+a1_m_asq_ext <- lmer(Score ~ Task +  asq_ext_c + (1 | subjectId), data=data.30, REML = FALSE)
+a1_m_asq_extz <- lmer(Score ~ Task + asq_ext_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+a1_m_asq_ext_iz <- lmer(Score ~ Task*asq_ext_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+summ(a1_m_asq_ext_iz)
+```
+```{r}
+summ(a1_m_asq_extz)
+```
+
+##### ASQ full
+```{r}
+a1_m_asq <- lmer(Score ~ Task + asq_c + (1 | subjectId), data=data.30, REML = FALSE)
+a1_m_asqz <- lmer(Score ~ Task + asq_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+a1_m_asq_iz <- lmer(Score ~ Task*asq_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+summ(a1_m_asq)
+```
+
+#### A2
+##### ASQint
+```{r}
+a2_m_asq_int <- lmer(Score ~ Task +  asq_int_c + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_asq_intz <- lmer(Score ~ Task +  asq_int_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+a2_m_asq_int_iz <- lmer(Score ~ Task*asq_int_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+summ(a2_m_asq_int)
+```
+
+##### ASQext
+```{r}
+a2_m_asq_ext <- lmer(Score ~ Task +  asq_ext_c + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_asq_extz <- lmer(Score ~ Task +  asq_ext_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+a2_m_asq_ext_iz <- lmer(Score ~ Task*asq_ext_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+summ(a2_m_asq_ext_iz)
+```
+##### ASQ full
+```{r}
+a2_m_asq <- lmer(Score ~ Task + asq_c + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_asqz <- lmer(Score ~ Task + asq_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+a2_m_asq_iz <- lmer(Score ~ Task*asq_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+summ(a2_m_asq)
+```
+
+### OVS
+#### A1
+#### OVS Full
+```{r}
+a1_m_ovs <- lmer(Score ~ Task + ovs_c + (1 | subjectId), data=data.30, REML = FALSE)
+a1_m_ovsz <- lmer(Score ~Task + ovs_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+a1_m_ovs_iz <- lmer(Score ~Task*ovs_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+summ(a1_m_ovs)
+```
+#### OVS Salience
+```{r}
+a1_m_ovs_sal <- lmer(Score ~ Task + ovs_salience_c + (1 | subjectId), data=data.30, REML = FALSE)
+a1_m_ovs_salz <- lmer(Score ~ Task +  ovs_salience_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+a1_m_ovs_sal_iz <- lmer(Score ~ Task*ovs_salience_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+summ(a1_m_ovs_sal)
+```
+#### OVS Reactibility
+```{r}
+a1_m_ovs_rec <- lmer(Score ~ Task + ovs_reactibility_c + (1 | subjectId), data=data.30, REML = FALSE)
+a1_m_ovs_recz <- lmer(Score ~ Task + ovs_reactibility_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+a1_m_ovs_rec_iz <- lmer(Score ~Task*ovs_reactibility_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+summ(a1_m_ovs_rec)
+```
+
+#### OVS Monitoring
+```{r}
+a1_m_ovs_mon <- lmer(Score ~ Task +  ovs_monitoring_c + (1 | subjectId), data=data.30, REML = FALSE)
+a1_m_ovs_monz <- lmer(Score ~Task +  ovs_monitoring_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+a1_m_ovs_mon_iz <- lmer(Score ~ Task*ovs_monitoring_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+summ(a1_m_ovs_mon)
+```
+#### A2
+#### OVS Full
+```{r}
+a2_m_ovs <- lmer(Score ~ Task + ovs_c + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_ovsz <- lmer(Score ~ Task + ovs_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+a2_m_ovs_iz <- lmer(Score ~ Task*ovs_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+summ(a2_m_ovs)
+```
+#### OVS Salience
+```{r}
+a2_m_ovs_sal <- lmer(Score ~ Task +  ovs_salience_c + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_ovs_salz <- lmer(Score ~ Task +  ovs_salience_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+a2_m_ovs_sal_iz <- lmer(Score ~ Task*ovs_salience_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+summ(a2_m_ovs_sal)
+```
+#### OVS Reactibility
+```{r}
+a2_m_ovs_rec <- lmer(Score ~ Task + ovs_reactibility_c + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_ovs_recz <- lmer(Score ~ Task + ovs_reactibility_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+a2_m_ovs_rec_iz <- lmer(Score ~ Task*ovs_reactibility_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+summ(a2_m_ovs_rec)
+```
+
+#### OVS Monitoring
+```{r}
+a2_m_ovs_mon <- lmer(Score ~ Task +  ovs_monitoring_c + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_ovs_monz <- lmer(Score ~ Task +  ovs_monitoring_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+a2_m_ovs_mon_iz <- lmer(Score ~ Task*ovs_monitoring_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+summ(a2_m_ovs_mon)
+```
+### VDAQ
+#### A1
+```{r}
+a1_m_vdaq <- lmer(Score ~ Task +vdaq_c + (1 | subjectId), data=data.30, REML = FALSE)
+a1_m_vdaqz <- lmer(Score ~ Task + vdaq_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+a1_m_vdaq_i <- lmer(Score ~ Task*vdaq_c + (1 | subjectId), data=data.30, REML = FALSE)
+a1_m_vdaq_iz <- lmer(Score ~ Task*vdaq_z + (1 | subjectId), data=data.30, REML = FALSE)
+
+
+summ(a1_m_vdaq)
+```
+#### A2
+```{r}
+a2_m_vdaq <- lmer(Score ~ Task + vdaq_c + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_vdaqz <- lmer(Score ~ Task + vdaq_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_vdaq_i <- lmer(Score ~ Task*vdaq_c + (1 | subjectId), data=data.ei_30, REML = FALSE)
+a2_m_vdaq_iz <- lmer(Score ~ Task*vdaq_z + (1 | subjectId), data=data.ei_30, REML = FALSE)
+
+
+summ(a2_m_vdaq_iz)
+```
+# Puhelin AICc-taulukko
+Taulukot gradussa.
+
+## A1
+AICC eri kuin muilla funktiolla-> korvaa
+```{r}
+tab_model(a1_model0,a1_m_1,a1_m_1_test, show.aicc = TRUE)
+```
+```{r}
+m_list <- c(a1_model0,a1_m_1,a1_m_1_test)
+m_names <- c("null", "Task", "Task+Balance")
+aictab(m_list,m_names, second.ord = TRUE)
+```
+## A2
+```{r}
+tab_model(a2_model0,a2_m_1,a2_m_1_test, show.aicc = TRUE)
+
+```
+```{r}
+m_list <- c(a2_model0,a2_m_1,a2_m_1_test)
+m_names <- c("null", "Task", "Task+Balance")
+aictab(m_list,m_names, second.ord = TRUE)
+```
+# Yksilölliset erot AICc-taulukko
+```{r}
+l_models <- c(a1_model0,a1_m_1,a1_m_1_test, a1_m_asqz,a1_m_asq_intz,a1_m_asq_extz,a1_m_ovsz,a1_m_ovs_monz,a1_m_ovs_recz,a1_m_ovs_salz,a1_m_vdaqz,a1_m_asq_iz,a1_m_asq_int_iz,a1_m_asq_ext_iz,a1_m_ovs_iz,a1_m_ovs_mon_iz,a1_m_ovs_rec_iz,a1_m_ovs_sal_iz,a1_m_vdaq_iz)
+l_names <- c("Nollamalli", "Task","Task+Bal", "asq+Task", "asqint+Task", "asqext+Task", "ovs+Task", "ovs_mon+Task", "ovs_rec+Task", "ovs_sal+Task", "vdaq+Task","asq*Task", "asqint*Task", "asqext*Task", "ovs*Task", "ovs_mon*Task", "ovs_rec*Task", "ovs_sal*Task", "vdaq*Task")
+aictab(l_models, l_names, second.ord = TRUE)
+```
