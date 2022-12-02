@@ -207,7 +207,6 @@ tab_corr(data %>% select( score_1, score_2, age,
 data.30 %>% wilcox_test(Score~Task, paired = TRUE, alternative = 'greater')
 data.30 %>% wilcox_effsize(Score~Task, paired = TRUE, ci=TRUE, alternative = 'greater')
 ```
-
 ```{r}
 #d = 2r/sqrt(1-r^2)
 2*0.01/sqrt(1-0.01^2)
@@ -269,7 +268,7 @@ print(paste("VPC: ", round(icc.lmer(a2_model0), digits=2)))
 ```
 VPC on 0.79, joten suuri osa varianssista vaikuttaisi olevan yksilön tasolla. Monitasomalli on siis tässä tapauksessa mielekäs.
 
-## Selittävien muuttujien lisääminen malliin
+## Yksilöllisten erojen vaikutus puhelimen häiritsevyyteen
 Tehtävä aina mukana, koska se on tutkimuksen todellinen kiinnostuksen kohde.
 ### Task
 #### A1
@@ -500,9 +499,66 @@ m_list <- c(a2_model0,a2_m_1,a2_m_1_test)
 m_names <- c("null", "Task", "Task+Balance")
 aictab(m_list,m_names, second.ord = TRUE)
 ```
-# Yksilölliset erot AICc-taulukko
+# AOSpan, Yksilölliset erot AICc-taulukko
 ```{r}
 l_models <- c(a1_model0,a1_m_1,a1_m_1_test, a1_m_asqz,a1_m_asq_intz,a1_m_asq_extz,a1_m_ovsz,a1_m_ovs_monz,a1_m_ovs_recz,a1_m_ovs_salz,a1_m_vdaqz,a1_m_asq_iz,a1_m_asq_int_iz,a1_m_asq_ext_iz,a1_m_ovs_iz,a1_m_ovs_mon_iz,a1_m_ovs_rec_iz,a1_m_ovs_sal_iz,a1_m_vdaq_iz)
 l_names <- c("Nollamalli", "Task","Task+Bal", "asq+Task", "asqint+Task", "asqext+Task", "ovs+Task", "ovs_mon+Task", "ovs_rec+Task", "ovs_sal+Task", "vdaq+Task","asq*Task", "asqint*Task", "asqext*Task", "ovs*Task", "ovs_mon*Task", "ovs_rec*Task", "ovs_sal*Task", "vdaq*Task")
 aictab(l_models, l_names, second.ord = TRUE)
 ```
+
+# Yksilöllisten erojen suhde nettivalppauteen
+Tutkitaan, onko nettivalppaden suhde yksilöllisiin erohin tarkkaavaisuudessa odotettu.
+
+Stantardointi `data` aineistolle. Tässä tapauksessa stantardointi yhdellä keskihajonnalla, koska mukana ei ole binäärisiä muuttujia.
+```{r}
+data$ovs_z <- (data$ovs - mean(data$ovs))/(sd(data$ovs))
+data$asq_z <- (data$asq - mean(data$asq))/(sd(data$asq))
+data$asq_int_z <- (data$asq_int - mean(data$asq_int))/(sd(data$asq_int))
+data$asq_ext_z <- (data$asq_ext - mean(data$asq_ext))/(sd(data$asq_ext))
+data$vdaq_z <- (data$vdaq - mean(data$vdaq))/(sd(data$vdaq))
+```
+
+Perus monimuuttuja lineearinen regressio.
+```{r}
+m_ovs_1 <- lm(ovs ~ vdaq_z, data=data)
+
+m_ovs_2 <- lm(ovs ~ vdaq_z +asq_z ,data=data)
+
+m_ovs_3 <- lm(ovs ~ vdaq_z +asq_int_z  +asq_ext_z, data=data)
+
+m_ovs_4 <- lm(ovs ~ vdaq_z  +asq_ext_z, data=data)
+
+m_ovs_5 <- lm(ovs ~ vdaq_z  +asq_int_z, data=data)
+
+m_ovs_6 <- lm(ovs ~ asq_ext_z, data=data)
+
+m_ovs_7 <- lm(ovs ~ asq_int_z, data=data)
+
+
+tab_model(m_ovs_1,m_ovs_2,m_ovs_3,m_ovs_4,m_ovs_5,m_ovs_6,m_ovs_7, show.aicc = TRUE)
+
+m_list <- list(m_ovs_1,m_ovs_2,m_ovs_3,m_ovs_4,m_ovs_5,m_ovs_6,m_ovs_7)
+m_names <- c("vdaq",  "vdaq+asq", "vdaq+asqint+asqext", "vdaq+asq_ext", "vdaq+asq_int", "asqext", "asqint")
+aictab(m_list,m_names)
+```
+
+Huumorilla logistisen linkin testaus generalisoidulla lineaarimallilla. Ei riitä tosin ymmärrys raportoimaan mitä tarkoittaisi ja ero täysin lineaariseen ei ole suuri.
+```{r}
+data.30 %>% ggplot() + aes( vdaq,ovs) + geom_point() + stat_smooth(method = "glm", method.args = list(gaussian(link = "log"))) + coord_cartesian(ylim = c(1,5))
+data.30 %>% ggplot() + aes( vdaq, ovs) + geom_point() + stat_smooth(method = "lm")+ coord_cartesian(ylim = c(1,5))
+```
+
+
+
+# ASQ suhde AOSpan pisteisiin 
+```{r}
+m_asq_1 <- lmer(Score ~ asq_z + (1|subjectId), data=data.ei_30)
+tab_model(m_asq_1)
+```
+```{r}
+plot_model(m_asq_1, type = "std")
+```
+```{r}
+data.ei_30 %>% ggplot() + aes(Score, asq) + geom_point()
+```
+
